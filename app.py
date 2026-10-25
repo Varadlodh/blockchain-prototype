@@ -2,6 +2,7 @@ import streamlit as st
 import time
 import json
 import os
+import hashlib
 from blockchain import Blockchain, Block
 
 # --- Setup Page Styling ---
@@ -9,6 +10,10 @@ st.set_page_config(page_title="Blockchain Verification System", page_icon="🔐"
 
 # --- Local File Persistence Functions ---
 DATA_FILE = "chain_data.json"
+
+def sha256_bytes(data: bytes) -> str:
+    """Computes the SHA-256 hash of raw file bytes."""
+    return hashlib.sha256(data).hexdigest()
 
 def load_stored_chain():
     """Loads the blockchain from a local JSON file or builds a new one if missing."""
@@ -18,7 +23,6 @@ def load_stored_chain():
             with open(DATA_FILE, "r") as f:
                 saved_blocks = json.load(f)
                 
-            # Reconstruct our blockchain instance from the raw JSON file data
             bc.chain = []
             for b_data in saved_blocks:
                 reconstructed_block = Block(
@@ -34,7 +38,7 @@ def load_stored_chain():
             bc = Blockchain()
             save_chain_to_disk(bc)
     else:
-        # Generate initial sample data for demonstration if file doesn't exist yet
+        # Pre-seed blocks with unique mock hashes to keep ledger populated
         bc.add_block({"student_name": "Amit Patel", "course": "B.E. Computer Science", "issuer": "Mumbai University", "cert_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"})
         bc.add_block({"student_name": "Neha Sharma", "course": "B.Tech Cyber Security", "issuer": "IIT Bombay", "cert_hash": "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a10f9e8d7c6b5a4f3e2d1c0b9a8f7"})
         save_chain_to_disk(bc)
@@ -67,16 +71,18 @@ st.markdown("A lightweight standalone functional simulation showing cryptographi
 st.divider()
 
 # --- Layout Navigation Setup ---
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📥 Issue New Certificate", 
     "📋 View Blockchain Ledger", 
     "🔍 Integrity Validation Check", 
-    "⚠️ Tamper Demonstration Lab"
+    "⚠️ Tamper Demonstration Lab",
+    "✅ Verify Certificate"
 ])
 
-# --- TAB 1: ENTRY INTERFACE ---
+# --- TAB 1: ENTRY INTERFACE (UPDATED WITH UPLOADER) ---
 with tab1:
     st.header("Issue Secure Credential Block")
+    st.markdown("🔒 *College Administrator Panel*")
     with st.form("issuance_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -84,12 +90,14 @@ with tab1:
             course_title = st.text_input("Course / Degree", placeholder="e.g. B.E. Information Technology")
         with col2:
             issuer_org = st.text_input("Issuing Institution", placeholder="e.g. University of Mumbai")
-            doc_hash = st.text_input("Certificate Document SHA-256 Hash", placeholder="Paste files raw signature hash")
+            cert_file = st.file_uploader("Upload Certificate File to Securely Hash", type=["png", "jpg", "jpeg", "pdf"])
             
         submit_btn = st.form_submit_button("Sign & Deploy to Ledger")
         
         if submit_btn:
-            if stu_name and course_title and issuer_org and doc_hash:
+            if stu_name and course_title and issuer_org and cert_file:
+                # Compute raw file cryptographic signature
+                doc_hash = sha256_bytes(cert_file.getvalue())
                 payload = {
                     "student_name": stu_name,
                     "course": course_title,
@@ -99,9 +107,9 @@ with tab1:
                 with st.spinner("Executing Proof-of-Work Mining Consensus..."):
                     bc.add_block(payload)
                     save_chain_to_disk(bc)
-                st.success(f"Success! Block #{bc.get_latest_block().index} has been securely mined and added to the ledger.")
+                st.success(f"Success! Block #{bc.get_latest_block().index} mined. Certificate Hash: {doc_hash[:20]}...")
             else:
-                st.error("All form inputs are required to construct a valid block.")
+                st.error("All form inputs and a certificate file are required.")
 
 # --- TAB 2: EXPLORER LEDGER VIEW ---
 with tab2:
@@ -152,3 +160,27 @@ with tab4:
                 os.remove(DATA_FILE)
             st.session_state.blockchain = load_stored_chain()
             st.rerun()
+
+# --- TAB 5: PUBLIC VERIFICATION LAYER (NEW) ---
+with tab5:
+    st.header("Verify a Certificate")
+    st.markdown("🔍 *Public Employer Verification Portal*")
+    verify_file = st.file_uploader("Upload certificate to check blockchain registry", type=["png", "jpg", "jpeg", "pdf"], key="verify_upload")
+    
+    if verify_file and st.button("Verify Now", type="primary"):
+        # Hash user uploaded document
+        h = sha256_bytes(verify_file.getvalue())
+        st.code(f"Computed SHA-256 Signature of File: {h}")
+        
+        # Scan block list for target hash
+        matches = [b for b in bc.chain if isinstance(b.data, dict) and b.data.get("cert_hash") == h]
+        chain_ok, msg, idx = bc.is_chain_valid()
+        
+        if matches and chain_ok:
+            b = matches[0]
+            st.success(f"✅ Verified Authentic! This document matches a valid blockchain entry at Block #{b.index}")
+            st.json(b.data)
+        elif matches and not chain_ok:
+            st.warning("⚠️ Hash match located, but the underlying system ledger state failed its verification integrity audit. This record cannot be trusted.")
+        else:
+            st.error("❌ Verification Failed: This certificate signature was never issued on this blockchain timeline, or the file bytes have been altered.")
